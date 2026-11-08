@@ -1,9 +1,11 @@
 name: atlasflow-youtube
+
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: 20m
     max-file: '5'
+
 services:
   postgres:
     image: postgres:17.11-bookworm
@@ -40,6 +42,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   kafka:
     image: apache/kafka:4.3.1
     hostname: kafka
@@ -84,6 +87,7 @@ services:
     volumes:
     - kafka_data:/var/lib/kafka/data
     logging: *default-logging
+
   connect:
     image: quay.io/debezium/connect:3.7.0.Final
     hostname: connect
@@ -119,6 +123,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   object-store:
     image: rustfs/rustfs:1.0.0
     hostname: object-store
@@ -148,6 +153,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   create-warehouse-bucket:
     image: rustfs/rustfs:1.0.0
     depends_on:
@@ -165,6 +171,7 @@ services:
     - atlasflow
     restart: 'no'
     logging: *default-logging
+
   iceberg-rest:
     image: apache/iceberg-rest-fixture@sha256:db8de90b5b7693d4ac334c336f91d9bbe320d7b19f4f514d26de84cdfbcbfe8d
     hostname: iceberg-rest
@@ -206,6 +213,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   flink-volume-init:
     image: busybox:1.37
     container_name: atlasflow-lite-flink-volume-init
@@ -225,6 +233,7 @@ services:
     - flink_savepoints:/savepoints
     restart: 'no'
     logging: *default-logging
+
   flink-jobmanager:
     image: atlasflow-flink-iceberg-kafka:2.2.0-1.12.0-kafka5.0
     build:
@@ -286,6 +295,7 @@ services:
     expose:
     - '9249'
     logging: *default-logging
+
   flink-taskmanager:
     image: atlasflow-flink-iceberg-kafka:2.2.0-1.12.0-kafka5.0
     hostname: flink-taskmanager
@@ -327,6 +337,7 @@ services:
     security_opt:
     - no-new-privileges:true
     stop_grace_period: 30s
+
     build:
       context: ./infra/flink
       dockerfile: Dockerfile
@@ -334,6 +345,7 @@ services:
     expose:
     - '9249'
     logging: *default-logging
+
   trino:
     image: trinodb/trino:484
     hostname: trino
@@ -366,6 +378,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   superset-db:
     image: postgres:16-bookworm
     hostname: superset-db
@@ -390,6 +403,7 @@ services:
     security_opt:
     - no-new-privileges:true
     logging: *default-logging
+
   superset-init:
     image: atlasflow-superset:6.1.0
     build:
@@ -421,6 +435,7 @@ services:
     security_opt:
     - no-new-privileges:true
     logging: *default-logging
+
   superset:
     image: atlasflow-superset:6.1.0
     hostname: superset
@@ -467,6 +482,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   prometheus:
     image: prom/prometheus:v3.15.1
     hostname: prometheus
@@ -499,6 +515,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   blackbox-exporter:
     image: prom/blackbox-exporter:v0.28.0
     hostname: blackbox-exporter
@@ -517,6 +534,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 15s
     logging: *default-logging
+
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.10.0
     hostname: kafka-exporter
@@ -537,6 +555,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 15s
     logging: *default-logging
+
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.6
     hostname: cadvisor
@@ -560,6 +579,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 15s
     logging: *default-logging
+
   grafana:
     image: grafana/grafana:13.2.4
     hostname: grafana
@@ -600,6 +620,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 30s
     logging: *default-logging
+
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:v1.5.0
     hostname: kafka-ui
@@ -621,6 +642,7 @@ services:
     - no-new-privileges:true
     stop_grace_period: 20s
     logging: *default-logging
+
   kafka-init:
     image: apache/kafka:4.3.1
     container_name: atlasflow-lite-kafka-init
@@ -640,6 +662,7 @@ services:
     networks:
     - atlasflow
     logging: *default-logging
+
   pipeline-bootstrap:
     image: atlasflow-pipeline-bootstrap:2.2.0-1.12.0
     build:
@@ -685,6 +708,7 @@ services:
     - ./sql:/opt/atlasflow/sql:ro
     - ./connectors:/opt/atlasflow/connectors:ro
     logging: *default-logging
+
   data-generator:
     image: atlasflow-generator:1.0
     build:
@@ -713,6 +737,7 @@ services:
     - /tmp
     stop_grace_period: 10s
     logging: *default-logging
+
   node-exporter:
     image: prom/node-exporter:v1.11.1
     hostname: node-exporter
@@ -733,6 +758,7 @@ services:
     security_opt: *id002
     stop_grace_period: 15s
     logging: *default-logging
+
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
     hostname: postgres-exporter
@@ -754,6 +780,7 @@ services:
     security_opt: *id002
     stop_grace_period: 15s
     logging: *default-logging
+
   loki:
     image: grafana/loki:3.7.3
     hostname: loki
@@ -779,6 +806,7 @@ services:
     security_opt: *id002
     stop_grace_period: 30s
     logging: *default-logging
+
   alloy:
     image: grafana/alloy:v1.21.1
     hostname: alloy
@@ -807,9 +835,11 @@ services:
     security_opt: *id002
     stop_grace_period: 20s
     logging: *default-logging
+
 networks:
   atlasflow:
     name: atlasflow-lite-network
+
 volumes:
   postgres_data:
     name: atlasflow-lite-postgres-data
