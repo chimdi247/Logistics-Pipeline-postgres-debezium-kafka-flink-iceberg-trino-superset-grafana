@@ -1,0 +1,20 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Rendered Flink SQL (contains object-store credentials; scripts delete it after use)
+runtime/*/*.sql
+!runtime/*/.gitkeep
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+logs/

@@ -7,6 +7,7 @@ schema and publishes the same CDC record shape used by the rest of the pipeline.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import time
@@ -45,8 +46,32 @@ INVENTORY_TARGETS = (
 )
 
 
+LOG_JSON = os.environ.get("LOG_FORMAT", "text").lower() == "json"
+
+
+def emit(level: str, message: str, **fields: Any) -> None:
+    """Plain text by default; one JSON object per line when LOG_FORMAT=json (shipped to Loki)."""
+    if LOG_JSON:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "level": level,
+            "logger": "generator",
+            "message": message,
+            **fields,
+        }
+        print(json.dumps(record, default=str), flush=True)
+    else:
+        print(message, flush=True)
+
+
 def load_dotenv() -> None:
-    """Load simple KEY=VALUE settings without needing a separate dotenv package."""
+    """Load simple KEY=VALUE settings without needing a separate dotenv package.
+
+    Inside Docker the settings arrive as real environment variables and no .env file exists,
+    so the file is only required when POSTGRES_PASSWORD is not already set.
+    """
+    if os.environ.get("POSTGRES_PASSWORD"):
+        return
     env_file = ROOT / ".env"
     if not env_file.exists():
         raise FileNotFoundError(
@@ -63,7 +88,7 @@ def load_dotenv() -> None:
 def connect() -> psycopg.Connection:
     load_dotenv()
     return psycopg.connect(
-        host="localhost",
+        host=os.environ.get("POSTGRES_HOST", "localhost"),
         port=int(os.environ.get("POSTGRES_PORT", "55432")),
         dbname="atlasflow_ops",
         user=os.environ.get("POSTGRES_USER", "atlasflow_admin"),
@@ -346,25 +371,34 @@ def main() -> int:
             tracking_count, disruption_count, inventory_updates = execute_once(
                 args.scenario, args.count, rng
             )
-            print(f"Scenario: {args.scenario}" + (f" (batch {batch_number})" if args.continuous else ""))
-            print(f"Inserted tracking events: {tracking_count}")
-            print(f"Inserted disruption events: {disruption_count}")
-            if inventory_updates:
-                print(f"Aligned existing inventory rows for the demo: {inventory_updates}")
-            print("All generated data was committed to PostgreSQL first.")
-            print("Debezium captures those database changes and publishes them to Kafka.")
+            if LOG_JSON:
+                emit(
+                    "info", "batch committed to PostgreSQL; Debezium will capture it",
+                    scenario=args.scenario, batch=batch_number,
+                    tracking_events=tracking_count, disruption_events=disruption_count,
+                    aligned_inventory_rows=inventory_updates,
+                )
+            else:
+                print(f"Scenario: {args.scenario}" + (f" (batch {batch_number})" if args.continuous else ""))
+                print(f"Inserted tracking events: {tracking_count}")
+                print(f"Inserted disruption events: {disruption_count}")
+                if inventory_updates:
+                    print(f"Aligned existing inventory rows for the demo: {inventory_updates}")
+                print("All generated data was committed to PostgreSQL first.")
+                print("Debezium captures those database changes and publishes them to Kafka.")
             if not args.continuous:
                 return 0
-            print(
-                f"Next batch in {args.interval_seconds:g} seconds. "
-                "Press Ctrl+C to stop continuous generation."
-            )
+            if not LOG_JSON:
+                print(
+                    f"Next batch in {args.interval_seconds:g} seconds. "
+                    "Press Ctrl+C to stop continuous generation."
+                )
             time.sleep(args.interval_seconds)
     except KeyboardInterrupt:
-        print("\nContinuous baseline generation stopped cleanly.")
+        emit("info", ("" if LOG_JSON else "\n") + "Continuous baseline generation stopped cleanly.")
         return 0
     except (KeyError, OSError, psycopg.Error, RuntimeError) as exc:
-        print(f"ERROR: {exc}")
+        emit("error", f"ERROR: {exc}", error_type=type(exc).__name__)
         return 1
 
 

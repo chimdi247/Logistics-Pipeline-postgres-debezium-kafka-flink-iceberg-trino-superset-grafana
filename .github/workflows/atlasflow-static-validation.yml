@@ -1,0 +1,21 @@
+name: AtlasFlow static validation
+on:
+  push:
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Static checks
+        run: python scripts/check-atlasflow-static.py --ci
+      - name: Shell syntax
+        run: for f in scripts/*.sh scripts/lib/*.sh infra/generator/entrypoint.sh docker/postgres/init/*.sh; do bash -n "$f"; done
+      - name: Compose renders with the example environment
+        run: |
+          cp .env.example .env
+          docker compose config --quiet

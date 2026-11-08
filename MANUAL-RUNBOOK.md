@@ -2,7 +2,7 @@
 
 This runbook walks through the complete local AtlasFlow pipeline, from PostgreSQL initialization and CDC capture to the continuously updated Gold table and Superset dashboard.
 
-Run all PowerShell commands from the repository root:
+Run all shell commands from the repository root:
 
 ```text
 AtlasFlow_YouTube_Edition/
@@ -22,12 +22,10 @@ There is no separate Silver current-state model job.
 
 Make sure the following are installed and running:
 
-- Windows 10/11
-- Docker Desktop with Docker Compose v2
-- PowerShell 5.1 or PowerShell 7
-- Python 3.10 or newer
+- Ubuntu 22.04 / 24.04 with Docker Engine and Docker Compose v2
+- Python 3.10 or newer, `jq` and `curl`
 
-Start Docker Desktop before continuing.
+> **Automated path:** `docker compose up -d --build` performs Steps 2-6 for you (the `kafka-init`, `pipeline-bootstrap` and `data-generator` services). Use this runbook to run or debug the steps one at a time; the scripts are idempotent and skip jobs that are already RUNNING. If you run them manually, stop the generator first (`docker compose stop data-generator`) if you want a controlled demo.
 
 ---
 
@@ -35,8 +33,8 @@ Start Docker Desktop before continuing.
 
 Prepare the local environment:
 
-```powershell
-.\scripts\prepare-local-env.ps1
+```bash
+./scripts/prepare-local-env.sh
 ```
 
 This script:
@@ -48,13 +46,13 @@ This script:
 
 Start the complete Docker Compose platform:
 
-```powershell
+```bash
 docker compose up -d --build
 ```
 
 Check the containers:
 
-```powershell
+```bash
 docker compose ps
 ```
 
@@ -88,8 +86,8 @@ The schema and initial seed data are created automatically when the PostgreSQL d
 
 Create or validate the PostgreSQL publication:
 
-```powershell
-.\scripts\setup-cdc-publications.ps1
+```bash
+./scripts/setup-cdc-publications.sh
 ```
 
 Expected result:
@@ -112,8 +110,8 @@ Debezium uses this publication to capture changes from the seven operational tab
 
 Create the consolidated business CDC topic:
 
-```powershell
-.\scripts\create-connect-topics.ps1
+```bash
+./scripts/create-connect-topics.sh
 ```
 
 The topic is:
@@ -136,8 +134,8 @@ http://localhost:8090
 
 Start the Bronze Flink streaming job first:
 
-```powershell
-.\scripts\submit-streaming-stage.ps1 -Stage Bronze
+```bash
+./scripts/submit-streaming-stage.sh bronze
 ```
 
 Expected confirmation:
@@ -150,8 +148,8 @@ Starting Bronze before Debezium ensures the Kafka consumer is ready before the i
 
 Now register the Debezium connector:
 
-```powershell
-.\scripts\register-debezium-connectors.ps1
+```bash
+./scripts/register-debezium-connectors.sh
 ```
 
 The connector name is:
@@ -181,8 +179,8 @@ Tracking events and disruption records are generated later by the Python generat
 
 Wait until the Bronze table contains the initial snapshot:
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\wait-for-cdc-snapshot.py --table atlasflow.bronze.cdc_events --minimum-rows 34 --timeout 300
+```bash
+.venv/bin/python scripts/wait-for-cdc-snapshot.py --table atlasflow.bronze.cdc_events --minimum-rows 34 --timeout 300
 ```
 
 Expected confirmation:
@@ -205,8 +203,8 @@ It stores the raw Debezium event payload together with Kafka metadata such as to
 
 Start the Silver streaming job:
 
-```powershell
-.\scripts\submit-streaming-stage.ps1 -Stage Silver
+```bash
+./scripts/submit-streaming-stage.sh silver
 ```
 
 Expected confirmation:
@@ -217,8 +215,8 @@ PASS: atlasflow-silver-cdc-normalize is RUNNING.
 
 Wait for the initial snapshot to reach Silver:
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\wait-for-cdc-snapshot.py --table atlasflow.silver.cdc_changes --minimum-rows 34 --timeout 300
+```bash
+.venv/bin/python scripts/wait-for-cdc-snapshot.py --table atlasflow.silver.cdc_changes --minimum-rows 34 --timeout 300
 ```
 
 Expected confirmation:
@@ -255,8 +253,8 @@ Make sure the Silver CDC job is RUNNING before starting Gold.
 
 Run:
 
-```powershell
-.\scripts\start-gold-stream.ps1
+```bash
+./scripts/start-gold-stream.sh
 ```
 
 Expected confirmation:
@@ -312,8 +310,8 @@ Debezium captures those changes and publishes them to Kafka. They then flow thro
 
 Run:
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario baseline --count 12 --seed 7
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario baseline --count 12 --seed 7
 ```
 
 This generates 12 tracking events across the existing shipments.
@@ -326,8 +324,8 @@ The generator checks and aligns the demonstration inventory quantities when nece
 
 Run:
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario fault-bundle
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario fault-bundle
 ```
 
 This scenario creates a deliberate logistics issue for:
@@ -349,8 +347,8 @@ The generator uses a stable disruption identifier and handles existing demo disr
 
 Run:
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\wait-for-demo-events.py --timeout 180
+```bash
+.venv/bin/python scripts/wait-for-demo-events.py --timeout 180
 ```
 
 Expected confirmation:
@@ -369,8 +367,8 @@ Continuous generation is optional. Use it when demonstrating ongoing changes flo
 
 Run:
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario baseline --continuous --count 4 --interval-seconds 30 --seed 7
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario baseline --continuous --count 4 --interval-seconds 30 --seed 7
 ```
 
 This generates four tracking events per batch and waits 30 seconds before starting the next batch.
@@ -601,7 +599,7 @@ Check:
 
 Inspect:
 
-```powershell
+```bash
 docker compose logs --tail=100 postgres kafka connect trino
 ```
 
@@ -616,7 +614,7 @@ atlasflow-silver-cdc-normalize
 
 Inspect the Silver SQL client log:
 
-```powershell
+```bash
 docker compose exec -T flink-jobmanager sh -lc "tail -n 120 /tmp/atlasflow-lite-silver.log"
 ```
 
@@ -626,7 +624,7 @@ Confirm that Silver CDC normalization is already RUNNING.
 
 Inspect the Gold SQL client log:
 
-```powershell
+```bash
 docker compose exec -T flink-jobmanager sh -lc "tail -n 120 /tmp/atlasflow-lite-gold-stream.log"
 ```
 
@@ -640,8 +638,8 @@ Then inspect the Debezium connector, Kafka topic, Bronze job, and Silver job.
 
 Run the event waiter again:
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\wait-for-demo-events.py --timeout 180
+```bash
+.venv/bin/python scripts/wait-for-demo-events.py --timeout 180
 ```
 
 ### 5. Superset dashboard does not reflect new data
@@ -661,13 +659,13 @@ Check:
 
 To stop the containers while preserving the named Docker volumes:
 
-```powershell
+```bash
 docker compose down
 ```
 
 Do not use:
 
-```powershell
+```bash
 docker compose down -v
 ```
 

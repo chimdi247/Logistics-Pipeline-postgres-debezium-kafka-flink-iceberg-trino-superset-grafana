@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import time
 from urllib.error import HTTPError, URLError
@@ -57,14 +58,25 @@ def check_connector(timeout: float) -> tuple[bool, str]:
         return False, f"cannot inspect connector status: {exc}"
 
 
+def check_loki_logs(timeout: float) -> tuple[bool, str]:
+    try:
+        _, raw = read_http("http://localhost:3100/loki/api/v1/label/service/values", timeout)
+        services = json.loads(raw).get("data", [])
+        if len(services) < 8:
+            return False, f"only {len(services)} service(s) have shipped logs so far: {', '.join(services)}"
+        return True, f"{len(services)} services are shipping logs to Loki"
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return False, f"cannot query Loki: {exc}"
+
+
 def check_flink_jobs(timeout: float) -> tuple[bool, str]:
-    expected = {"atlasflow-bronze-cdc", "atlasflow-silver-cdc-normalize", "atlasflow-silver-current-state-models", "atlasflow-gold-control-tower-stream"}
+    expected = {"atlasflow-bronze-cdc", "atlasflow-silver-cdc-normalize", "atlasflow-gold-control-tower-stream"}
     try:
         _, raw = read_http("http://localhost:8081/jobs/overview", timeout)
         jobs = json.loads(raw).get("jobs", [])
         running = {job.get("name") for job in jobs if job.get("state") == "RUNNING"}
         missing = sorted(expected - running)
-        return (not missing, "Bronze, Silver CDC, Silver models, and Gold streaming jobs are RUNNING" if not missing else "missing RUNNING jobs: " + ", ".join(missing))
+        return (not missing, "Bronze, Silver CDC, and Gold streaming jobs are RUNNING" if not missing else "missing RUNNING jobs: " + ", ".join(missing))
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         return False, f"cannot inspect Flink jobs: {exc}"
 
@@ -111,7 +123,7 @@ def main() -> int:
     args = parser.parse_args()
     checks: list[tuple[str, bool, str]] = []
 
-    checks.append(("PostgreSQL", *check_tcp("PostgreSQL", "localhost", 55432, args.timeout)))
+    checks.append(("PostgreSQL", *check_tcp("PostgreSQL", "localhost", int(os.environ.get("POSTGRES_PORT", "55432")), args.timeout)))
     checks.append(("Kafka", *check_tcp("Kafka", "localhost", 9092, args.timeout)))
     endpoints = [
         ("Kafka Connect", "http://localhost:8083/connectors"),
@@ -122,10 +134,14 @@ def main() -> int:
         ("Superset", "http://localhost:8088/health"),
         ("Prometheus", "http://localhost:9090/-/ready"),
         ("Grafana", "http://localhost:3000/api/health"),
+        ("Loki", "http://localhost:3100/ready"),
+        ("Alloy", "http://localhost:12345/-/ready"),
     ]
     for label, url in endpoints:
         ok, message = check_http(label, url, args.timeout, args.retries)
         checks.append((label, ok, message))
+    ok, message = check_loki_logs(args.timeout)
+    checks.append(("Loki logs", ok, message))
     ok, message = check_connector(args.timeout)
     checks.append(("Debezium", ok, message))
     if not args.skip_stream_jobs:

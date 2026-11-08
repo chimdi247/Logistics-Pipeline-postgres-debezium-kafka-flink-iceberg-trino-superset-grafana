@@ -2,7 +2,7 @@ groups:
   - name: atlasflow-availability
     rules:
       - alert: AtlasFlowExporterScrapeFailed
-        expr: up{job=~"prometheus|blackbox-exporter|kafka-exporter|container-metrics"} == 0
+        expr: up{job=~"prometheus|blackbox-exporter|kafka-exporter|container-metrics|node-exporter|postgres-exporter|flink|loki|alloy|grafana"} == 0
         for: 2m
         labels:
           severity: warning
@@ -36,3 +36,59 @@ groups:
         annotations:
           summary: "Kafka consumer group lag is high"
           description: "Consumer group {{ $labels.consumergroup }} has lag {{ $value }} on topic {{ $labels.topic }} partition {{ $labels.partition }}."
+
+  - name: atlasflow-pipeline
+    rules:
+      - alert: AtlasFlowFlinkJobsMissing
+        expr: flink_jobmanager_numRunningJobs < 3
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fewer than three Flink streaming jobs are running"
+          description: "Bronze, Silver and Gold should all be RUNNING; only {{ $value }} are. Re-run: docker compose up -d (pipeline-bootstrap is idempotent)."
+
+      - alert: AtlasFlowPostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is not reachable by postgres-exporter"
+
+      - alert: AtlasFlowCdcSlotInactive
+        expr: pg_replication_slot_slot_is_active == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Debezium replication slot is inactive"
+          description: "Slot {{ $labels.slot_name }} retains WAL on the VM disk while Debezium is not consuming it."
+
+  - name: atlasflow-host
+    rules:
+      - alert: AtlasFlowHostDiskLow
+        expr: 100 * node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM root filesystem has less than 15% free space"
+
+      - alert: AtlasFlowHostMemoryLow
+        expr: 100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM has less than 8% available memory"
+
+  - name: atlasflow-logging
+    rules:
+      - alert: AtlasFlowLogShippingDroppingEntries
+        expr: increase(loki_write_dropped_entries_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alloy is dropping log entries before they reach Loki"

@@ -1,0 +1,280 @@
+// =================================================================================================
+// Grafana Alloy: ships structured logs from every AtlasFlow container (and the VM journal) to Loki.
+//
+//   Docker socket -> discovery.docker -> (2 relabel groups) -> loki.source.docker
+//                 -> [multiline merge for timestamped Java/Postgres/Python logs]
+//                 -> loki.process "structure" (JSON / logfmt / per-service parsing, level
+//                    normalisation, labels + structured metadata) -> loki.write -> Loki
+//
+// Label policy (kept low-cardinality on purpose): project, service, container, job, level.
+// High-cardinality fields (logger, pid) are stored as Loki structured metadata, not labels.
+// =================================================================================================
+
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// ------------------------------------------------------------------ 1. discovery
+discovery.docker "atlasflow" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "10s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=atlasflow-youtube"]
+  }
+}
+
+// Group A: services whose log records start with a timestamp and may span several lines
+// (stack traces, multi-line SQL). Their lines are merged before parsing.
+discovery.relabel "timestamped" {
+  targets = discovery.docker.atlasflow.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "postgres|superset-db|kafka|connect|flink-jobmanager|flink-taskmanager|trino|iceberg-rest|superset|superset-init|kafka-ui"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    target_label = "project"
+    replacement  = "atlasflow"
+  }
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+}
+
+// Group B: everything else (JSON / logfmt / single-line logs).
+discovery.relabel "other" {
+  targets = discovery.docker.atlasflow.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "postgres|superset-db|kafka|connect|flink-jobmanager|flink-taskmanager|trino|iceberg-rest|superset|superset-init|kafka-ui"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    target_label = "project"
+    replacement  = "atlasflow"
+  }
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+}
+
+loki.source.docker "timestamped" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.timestamped.output
+  forward_to       = [loki.process.multiline.receiver]
+  refresh_interval = "5s"
+}
+
+loki.source.docker "other" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.other.output
+  forward_to       = [loki.process.structure.receiver]
+  refresh_interval = "5s"
+}
+
+// ------------------------------------------------------------------ 2. multiline merge
+loki.process "multiline" {
+  forward_to = [loki.process.structure.receiver]
+
+  // A new record starts with a date (optionally inside [brackets], as Kafka does). Anything else
+  // (indented stack frames, "Caused by:", continuation SQL) is appended to the previous record.
+  stage.multiline {
+    firstline     = "^\\[?\\d{4}-\\d{2}-\\d{2}"
+    max_wait_time = "3s"
+    max_lines     = 256
+  }
+}
+
+// ------------------------------------------------------------------ 3. structure + normalise
+loki.process "structure" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.drop {
+    expression          = "^\\s*$"
+    drop_counter_reason = "empty_line"
+  }
+
+  // 3a. Generic JSON logs (Prometheus, Loki, Grafana, exporters, generator, pipeline-bootstrap...).
+  stage.match {
+    selector = "{project=\"atlasflow\"} |~ \"^[ ]*[{]\""
+
+    stage.json {
+      expressions = {
+        json_level = "level || lvl || severity || log.level",
+        logger     = "logger || logger_name || caller || source",
+      }
+    }
+  }
+
+  // 3b. Generic logfmt logs (key=value), e.g. Grafana/Prometheus text mode, kafka-exporter.
+  stage.match {
+    selector = "{project=\"atlasflow\"} |~ \"^[^{].*level=[A-Za-z]\""
+
+    stage.logfmt {
+      mapping = {
+        logfmt_level = "level",
+        logger       = "logger",
+      }
+    }
+  }
+
+  // 3c. Generic timestamped text logs: Flink, Debezium/Kafka Connect, Kafka, Trino (tab separated),
+  //     Spring (kafka-ui), Iceberg REST and Superset (colon separated).
+  stage.match {
+    selector = "{project=\"atlasflow\"} |~ \"^\\\\[?[0-9]{4}-[0-9]{2}-[0-9]{2}\""
+
+    stage.regex {
+      expression = "^\\[?\\d{4}-\\d{2}-\\d{2}[T ]\\S*?[\\s:]+(?:\\[[^\\]]*\\]\\s+)?(?P<text_level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|SEVERE|CRITICAL)\\b"
+    }
+  }
+
+  // 3d. Per-service logger extraction.
+  stage.match {
+    selector = "{service=~\"flink-jobmanager|flink-taskmanager\"}"
+
+    stage.regex {
+      expression = "^\\S+ \\S+\\s+[A-Z]+\\s+(?P<logger>[\\w.$]+)\\s"
+    }
+  }
+
+  stage.match {
+    selector = "{service=\"connect\"}"
+
+    stage.regex {
+      expression = "\\[(?P<logger>[\\w.$]+)\\]\\s*$"
+    }
+  }
+
+  stage.match {
+    selector = "{service=\"kafka\"}"
+
+    stage.regex {
+      expression = "\\((?P<logger>[\\w.$]+)\\)\\s*$"
+    }
+  }
+
+  stage.match {
+    selector = "{service=\"trino\"}"
+
+    stage.regex {
+      expression = "^\\S+\\t[A-Z]+\\t[^\\t]*\\t(?P<logger>[^\\t]+)\\t"
+    }
+  }
+
+  stage.match {
+    selector = "{service=~\"superset|superset-init\"}"
+
+    stage.regex {
+      expression = "^\\S+ \\S+:[A-Z]+:(?P<logger>[\\w.]+):"
+    }
+  }
+
+  // 3e. PostgreSQL: "2026-11-07 10:00:00.123 UTC [42] LOG:  message" (levels LOG/WARNING/ERROR/FATAL/PANIC).
+  stage.match {
+    selector = "{service=~\"postgres|superset-db\"}"
+
+    stage.regex {
+      expression = "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d+ \\w+ \\[(?P<pid>\\d+)\\] (?P<pg_level>[A-Z0-9]+):"
+    }
+  }
+
+  // 3f. One normalised level vocabulary across every service: error | warn | info | debug | unknown.
+  stage.template {
+    source   = "level"
+    template = "{{ $l := ToLower (or .json_level .logfmt_level .text_level .pg_level \"unknown\") }}{{ if or (eq $l \"warning\") (eq $l \"warn\") }}warn{{ else if or (eq $l \"err\") (eq $l \"error\") (eq $l \"fatal\") (eq $l \"panic\") (eq $l \"critical\") (eq $l \"crit\") (eq $l \"severe\") (eq $l \"alert\") (eq $l \"emerg\") }}error{{ else if or (eq $l \"info\") (eq $l \"log\") (eq $l \"notice\") (eq $l \"information\") }}info{{ else if or (eq $l \"debug\") (eq $l \"trace\") }}debug{{ else }}unknown{{ end }}"
+  }
+
+  stage.labels {
+    values = {
+      level = "level",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      logger = "logger",
+      pid    = "pid",
+    }
+  }
+}
+
+// ------------------------------------------------------------------ 4. VM journal (host logs)
+// Captures sshd, docker.service, kernel/OOM-killer messages, etc., next to the application logs.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+  rule {
+    source_labels = ["level"]
+    regex         = "warning"
+    target_label  = "level"
+    replacement   = "warn"
+  }
+  rule {
+    source_labels = ["level"]
+    regex         = "err|crit|alert|emerg"
+    target_label  = "level"
+    replacement   = "error"
+  }
+  rule {
+    source_labels = ["level"]
+    regex         = "notice"
+    target_label  = "level"
+    replacement   = "info"
+  }
+}
+
+loki.source.journal "host" {
+  path          = "/var/log/journal"
+  max_age       = "6h"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = {
+    job     = "systemd-journal",
+    project = "atlasflow",
+    service = "host-journal",
+  }
+  forward_to    = [loki.write.default.receiver]
+}
+
+// ------------------------------------------------------------------ 5. Loki
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+
+  external_labels = {
+    environment = "ubuntu-vm",
+  }
+}

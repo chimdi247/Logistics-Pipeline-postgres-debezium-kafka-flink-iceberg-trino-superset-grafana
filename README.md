@@ -238,8 +238,9 @@ The Gold dataset powers the Superset dashboard, which can include:
 
 ### 7. Observability
 
-- Prometheus metrics collection.
-- Grafana platform-observability dashboard.
+- Prometheus metrics collection, with node-exporter (VM), postgres-exporter, Flink's built-in Prometheus reporter, kafka-exporter, cAdvisor and blackbox probes.
+- Structured logs from every container and the VM journal shipped by Grafana Alloy to Loki (levels normalised, stack traces merged, `service`/`level` labels).
+- Grafana provisions Prometheus and Loki datasources plus three dashboards: platform, host/PostgreSQL/Flink, and logs.
 - Kafka UI for topic and message inspection.
 - Flink dashboard for streaming job status.
 - Docker service health checks.
@@ -283,31 +284,37 @@ The `primary_risk_reason` column explains the first applicable risk condition. T
 
 ### Requirements
 
-- Windows 10 or Windows 11
-- Docker Desktop with Docker Compose v2
-- PowerShell 5.1 or PowerShell 7
-- Python 3.10+
+- Ubuntu 22.04 / 24.04 (cloud VM or local), 4+ vCPU, 16 GB+ RAM, 60 GB+ disk
+- Docker Engine with Docker Compose v2 (`./scripts/install-docker-ubuntu.sh` installs it)
+- Python 3.10+ (only for the host-side helper scripts)
 - Sufficient memory and disk space for the containerized stack
 
 ### Quick Start
 
-Start Docker Desktop and open PowerShell in the repository root.
+On a fresh Ubuntu VM, the whole platform starts from one Compose file. See [`DEPLOY-UBUNTU.md`](DEPLOY-UBUNTU.md) for the full guide.
+
+```bash
+./scripts/install-docker-ubuntu.sh   # once: Docker, Compose, jq, python3-venv
+./scripts/deploy.sh                  # .env + docker compose up -d --build + smoke test
+```
+
+The manual, step-by-step alternative:
 
 Prepare the local environment:
 
-```powershell
-.\scripts\prepare-local-env.ps1
+```bash
+./scripts/prepare-local-env.sh
 ```
 
 This prepares the local `.env` file, creates the Python virtual environment, and installs the required Python dependencies.
 
 Start the platform:
 
-```powershell
+```bash
 docker compose up -d --build
 ```
 
-The complete eight-step pipeline procedure is documented in [`MANUAL-RUNBOOK.md`](MANUAL-RUNBOOK.md).
+`docker compose up -d --build` also runs the Kafka topic, CDC publication, Debezium connector and the Bronze/Silver/Gold Flink jobs automatically (`pipeline-bootstrap`), then starts the continuous data generator. The manual equivalent of each step is documented in [`MANUAL-RUNBOOK.md`](MANUAL-RUNBOOK.md).
 
 **Important:** PostgreSQL initialization scripts execute automatically when the PostgreSQL data volume is first created. Existing Docker volumes preserve their data; `docker compose down -v` is destructive and should not be used casually.
 
@@ -321,24 +328,24 @@ The generator supports two one-shot scenarios and an optional continuous mode.
 
 Creates ordinary shipment tracking events and synchronizes shipment status with the generated event.
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario baseline --count 12 --seed 7
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario baseline --count 12 --seed 7
 ```
 
 ### Fault-Bundle Scenario
 
 Updates `SHP-008` to delayed, inserts an exception tracking event, and creates an active port-congestion disruption.
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario fault-bundle
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario fault-bundle
 ```
 
 ### Optional Continuous Generation
 
 Generates four baseline tracking events per batch, with a 30-second interval between batches.
 
-```powershell
-.\.venv\Scripts\python.exe .\generators\generate_logistics_data.py --scenario baseline --continuous --count 4 --interval-seconds 30 --seed 7
+```bash
+.venv/bin/python generators/generate_logistics_data.py --scenario baseline --continuous --count 4 --interval-seconds 30 --seed 7
 ```
 
 Press `Ctrl+C` to stop continuous generation.
@@ -393,6 +400,8 @@ All services are intended for local development and are exposed through the conf
 | Apache Superset | http://localhost:8088 |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 |
+| Loki (logs API) | http://localhost:3100/ready |
+| Alloy (log shipper UI) | http://localhost:12345 |
 
 Superset and Grafana login credentials are generated or configured in the local `.env` file.
 
@@ -449,14 +458,14 @@ AtlasFlow_YouTube_Edition/
 │
 ├── scripts/
 │   ├── check-atlasflow-static.py
-│   ├── create-connect-topics.ps1
-│   ├── prepare-local-env.ps1
-│   ├── register-debezium-connectors.ps1
-│   ├── setup-cdc-publications.ps1
+│   ├── create-connect-topics.sh
+│   ├── prepare-local-env.sh
+│   ├── register-debezium-connectors.sh
+│   ├── setup-cdc-publications.sh
 │   ├── smoke-test-atlasflow.py
-│   ├── start-gold-stream.ps1
-│   ├── submit-streaming-stage.ps1
-│   ├── verify-atlasflow.ps1
+│   ├── start-gold-stream.sh
+│   ├── submit-streaming-stage.sh
+│   ├── verify-atlasflow.sh
 │   ├── wait-for-cdc-snapshot.py
 │   └── wait-for-demo-events.py
 │
@@ -487,14 +496,14 @@ The repository includes static validation and live health-check utilities.
 
 Run the static checks in a clean source checkout without a local `.env` file:
 
-```powershell
-python .\scripts\check-atlasflow-static.py
+```bash
+python3 scripts/check-atlasflow-static.py
 ```
 
 For live platform diagnostics, the repository also includes:
 
-```powershell
-.\scripts\smoke-test-atlasflow.py
+```bash
+.venv/bin/python scripts/smoke-test-atlasflow.py
 ```
 
 Static validation checks repository structure, SQL template presence, Python syntax, YAML/JSON configuration, and key pipeline contracts. It does not replace a live Docker integration test of Flink SQL jobs.

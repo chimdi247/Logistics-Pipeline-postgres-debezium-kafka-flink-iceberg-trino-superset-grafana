@@ -24,7 +24,7 @@ def main() -> int:
         check(isinstance(services,dict) and len(services)>=15,'Compose file parses and contains the platform services')
     except Exception as exc:
         compose={}; services={}; check(False,f'compose.yaml parses ({exc})')
-    expected={'postgres','kafka','connect','object-store','create-warehouse-bucket','iceberg-rest','flink-jobmanager','flink-taskmanager','trino','superset-db','superset-init','superset','prometheus','blackbox-exporter','kafka-exporter','cadvisor','grafana','kafka-ui'}
+    expected={'postgres','kafka','connect','object-store','create-warehouse-bucket','iceberg-rest','flink-jobmanager','flink-taskmanager','trino','superset-db','superset-init','superset','prometheus','blackbox-exporter','kafka-exporter','cadvisor','grafana','kafka-ui','kafka-init','pipeline-bootstrap','data-generator','node-exporter','postgres-exporter','loki','alloy'}
     check(expected.issubset(services),'all platform services are present')
     check(not any(str(x).lower().startswith('airf') for x in services),'removed orchestration services are absent from Compose')
     check(compose.get('name')=='atlasflow-youtube','Compose project identity is preserved')
@@ -70,7 +70,7 @@ def main() -> int:
         if rel == 'scripts/check-atlasflow-static.py': continue
         if any(seg in {'.venv','venv','node_modules','__pycache__','.git','logs'} for seg in p.parts): continue
         txt=''
-        if p.suffix.lower() in {'.md','.ps1','.py','.sql','.template','.yml','.yaml','.json','.example'}:
+        if p.suffix.lower() in {'.md','.sh','.py','.sql','.template','.yml','.yaml','.json','.example'}:
             try: txt=p.read_text(encoding='utf-8-sig',errors='ignore')
             except OSError: continue
             if re.search(r'stage[6789]',txt,re.I): check(False,f'legacy numbered layer reference removed: {rel}')
@@ -88,16 +88,22 @@ def main() -> int:
     env_names=set(re.findall(r'(?m)^([A-Z0-9_]+)=',env))
     compose_names=set(re.findall(r'\$\{([A-Z0-9_]+)(?::[-?][^}]*)?\}',compose_text))
     check(compose_names.issubset(env_names),'safe .env.example includes every environment variable referenced by Compose')
-    check(not (ROOT/'.env').exists() and '.env' in read('.gitignore').splitlines(),'archive does not ship .env and Git ignores local secrets')
+    check('.env' in read('.gitignore').splitlines(),'Git ignores local secrets (.env)')
+    if '--ci' in sys.argv: check(not (ROOT/'.env').exists(),'archive does not ship .env')
     check(not any(p.name.startswith('generate_tracking') for p in (ROOT/'generators').rglob('*.py')),'obsolete direct tracking generator is deleted')
     check(not any(p.name.lower().startswith('airf') for p in ROOT.iterdir()) and not any(p.name.lower().startswith('airf') for p in (ROOT/'infra').iterdir()),'removed orchestration source/config/log folders are deleted')
     check(not any(p.is_dir() and p.name.startswith('stage') and p.name[5:].isdigit() for p in (ROOT/'sql').iterdir()),'SQL directories use semantic layer names')
     check(not any(p.is_dir() and p.name.startswith('stage') and p.name[5:].isdigit() for p in (ROOT/'runtime').iterdir()),'runtime directories use semantic layer names')
-    for rel in ['scripts/submit-streaming-stage.ps1','scripts/start-gold-stream.ps1','scripts/prepare-local-env.ps1','scripts/run-trino-query-pack.py','scripts/wait-for-cdc-snapshot.py','scripts/wait-for-demo-events.py','scripts/smoke-test-atlasflow.py']:
+    for rel in ['scripts/submit-streaming-stage.sh','scripts/start-gold-stream.sh','scripts/prepare-local-env.sh','scripts/bootstrap-pipeline.sh','scripts/lib/common.sh','scripts/deploy.sh','scripts/install-docker-ubuntu.sh','infra/generator/Dockerfile','infra/observability/loki/loki-config.yml','infra/observability/alloy/config.alloy','infra/observability/grafana/provisioning/datasources/loki.yml','scripts/run-trino-query-pack.py','scripts/wait-for-cdc-snapshot.py','scripts/wait-for-demo-events.py','scripts/smoke-test-atlasflow.py']:
         check((ROOT/rel).is_file(),f'required helper exists: {rel}')
-    check(not any(p.name.startswith('refresh_') for p in (ROOT/'scripts').glob('*.ps1')),'old batch Gold refresh script is removed')
+    check(not any(p.name.startswith('refresh_') for p in (ROOT/'scripts').glob('*.sh')),'old batch Gold refresh script is removed')
     workflow=yaml.safe_load(read('.github/workflows/atlasflow-static-validation.yml'))
     check(isinstance(workflow,dict) and 'validate' in workflow.get('jobs',{}),'GitHub Actions runs static validation')
+    check(not any(p.suffix=='.ps1' for p in ROOT.rglob('*') if '.venv' not in p.parts),'no PowerShell scripts remain; shell scripts are used instead')
+    check(all(x in compose_text for x in ['grafana/loki:','grafana/alloy:','atlasflow-lite-kafka-data']),'Loki, Alloy and the persistent Kafka volume are in Compose')
+    ds=read('infra/observability/grafana/provisioning/datasources/loki.yml')
+    check('type: loki' in ds and 'http://loki:3100' in ds,'Grafana provisions Loki as a datasource')
+    check('loki.write' in read('infra/observability/alloy/config.alloy'),'Alloy pipeline writes to Loki')
     print(f'\nSummary: {CHECKS} checks, {len(FAILURES)} failure(s)')
     if FAILURES:
         for failure in FAILURES: print('ERROR | '+failure)
