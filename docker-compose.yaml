@@ -24,7 +24,7 @@ services:
     - -c
     - max_replication_slots=10
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-55432}:5432
+      - "55432:5432"
     volumes:
     - postgres_data:/var/lib/postgresql/data
     - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -49,7 +49,7 @@ services:
     container_name: atlasflow-lite-kafka
     restart: unless-stopped
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:9092:9092
+      - "9092:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
@@ -99,7 +99,7 @@ services:
       kafka:
         condition: service_healthy
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:8083:8083
+      - "8083:8083"
     environment:
       BOOTSTRAP_SERVERS: kafka:19092
       GROUP_ID: atlasflow-connect-cluster
@@ -130,7 +130,7 @@ services:
     container_name: atlasflow-lite-object-store
     restart: unless-stopped
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:9000:9000
+      - "9000:9000"
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY in .env}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in .env}
@@ -181,7 +181,7 @@ services:
       create-warehouse-bucket:
         condition: service_completed_successfully
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:18181:8181
+      - "18181:8181"
     environment:
       AWS_REGION: us-east-1
       CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
@@ -250,7 +250,7 @@ services:
       flink-volume-init:
         condition: service_completed_successfully
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:8081:8081
+      - "8081:8081"
     environment:
       FLINK_PROPERTIES: 'jobmanager.rpc.address: flink-jobmanager
 
@@ -363,7 +363,7 @@ services:
     - ./infra/trino/catalog/atlasflow.properties:/etc/trino/catalog/atlasflow.properties:ro
     - ./sql/atlasflow_queries.sql:/opt/atlasflow/atlasflow_queries.sql:ro
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:18080:8080
+      - "18080:8080"
     healthcheck:
       test:
       - CMD-SHELL
@@ -460,7 +460,7 @@ services:
     volumes:
     - superset_home:/app/superset_home
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:8088:8088
+      - "8088:8088"
     entrypoint:
     - /bin/sh
     - -c
@@ -500,7 +500,7 @@ services:
     - ./infra/observability/prometheus/rules:/etc/prometheus/rules:ro
     - prometheus_data:/prometheus
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:9090:9090
+      - "9090:9090"
     healthcheck:
       test:
       - CMD-SHELL
@@ -605,7 +605,7 @@ services:
     - grafana_data:/var/lib/grafana
     - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:3000:3000
+      - "3000:3000"
     healthcheck:
       test:
       - CMD-SHELL
@@ -635,7 +635,7 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
       KAFKA_CLUSTERS_0_READONLY: 'false'
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:8090:8080
+      - "8090:8080"
     networks:
     - atlasflow
     security_opt:
@@ -792,7 +792,7 @@ services:
     - ./infra/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     - loki_data:/loki
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:3100:3100
+      - "3100:3100"
     networks:
     - atlasflow
     security_opt: *id002
@@ -821,7 +821,7 @@ services:
     - /run/log/journal:/run/log/journal:ro
     - /etc/machine-id:/etc/machine-id:ro
     ports:
-    - ${BIND_ADDRESS:-127.0.0.1}:12345:12345
+      - "12345:12345"
     networks:
     - atlasflow
     security_opt: *id002
