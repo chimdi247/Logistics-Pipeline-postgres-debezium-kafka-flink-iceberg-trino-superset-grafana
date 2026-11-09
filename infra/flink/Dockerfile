@@ -10,12 +10,8 @@ FROM apache/flink:2.2.0-scala_2.12-java17 AS runtime
 USER root
 RUN mkdir -p /opt/flink/lib \
     && chown -R flink:flink /opt/flink/lib
-# Ship the built-in Prometheus reporter as a plugin; it is switched on through FLINK_PROPERTIES
+# The Prometheus reporter plugin ships with the base image; it is switched on through FLINK_PROPERTIES
 # (metrics.reporter.prom.*) in compose.yaml and scraped by Prometheus on :9249.
-RUN set -eux; \
-    mkdir -p /opt/flink/plugins/metrics-prometheus; \
-    cp /opt/flink/opt/flink-metrics-prometheus-*.jar /opt/flink/plugins/metrics-prometheus/; \
-    chown -R flink:flink /opt/flink/plugins/metrics-prometheus
 
 USER flink
 WORKDIR /opt/flink
